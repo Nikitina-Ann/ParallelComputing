@@ -20,8 +20,6 @@ class testclass : public CPPUNIT_NS::TestFixture {
     CPPUNIT_TEST_SUITE(testclass);
 
     CPPUNIT_TEST(testMult);
-    CPPUNIT_TEST(testReadMatrix);
-    CPPUNIT_TEST(testWriteMatrix);
 
     CPPUNIT_TEST_SUITE_END();
 

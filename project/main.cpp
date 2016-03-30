@@ -4,9 +4,11 @@
 #include <sys/time.h>
 #include <omp.h>
 #include <cstdlib>
+#include <cmath>
 using namespace std;
 #define SIZE 1000 //максимальный размер матриц
-#define THR_NUM  8 //число потоков
+#define THR_NUM  2 //число потоков
+#define TEST_NUM  50 //количество тестов
 struct timeval tv1,tv2,dtv;
 
 struct matrix_args{
@@ -24,7 +26,7 @@ long int dtime(){
   dtv.tv_sec= tv2.tv_sec -tv1.tv_sec;
   dtv.tv_usec=tv2.tv_usec-tv1.tv_usec;
   if(dtv.tv_usec<0) { dtv.tv_sec--; dtv.tv_usec+=1000000; }
-    return dtv.tv_sec*1e+3+dtv.tv_usec*1e-3;
+    return dtv.tv_sec+dtv.tv_usec*1e-6;
 }
 //Чтение матрицы из файла
 void readMatrix(int** matrix, int r, int c, char* filename) {
@@ -57,14 +59,11 @@ void writeMatrix(int** matrix, int r, int c, char* filename){
 bool mult(int** a, int** b, int** res, int r1, int c1, int r2, int c2, bool openMP, int numThread){
     if(c1 != r2)
         return false;
-    #pragma omp parallel num_threads(numThread) if(openMP)
-    {
-        #pragma omp for
+    #pragma omp parallel for num_threads(numThread) if(openMP)
         for(int i=0; i<r1; i++)
             for(int j=0; j<c2; j++)
                 for(int k=0; k<c1; k++)
                     res[i][j]+=a[i][k]*b[k][j];  
-    }
     return true;
 }
 //Умножение матриц PTHREAD
@@ -116,35 +115,48 @@ void delete_matrix(int** matrix, int r, int c){
 for (int i = 0; i < c; i++)
         delete [] matrix[r];
 }
-
+//Вычисление математического ожидания, дисперсии, доверительного интервала
+float matStatistic(float* timeMatr, int size){
+    float sum=0;
+    float aver, disp, min, max;
+    for (int i=0; i< size; i++){
+        sum=sum+timeMatr[i];
+    }
+    aver= (float)sum/size;
+    sum=0;
+    for (int i=0; i< size; i++){
+       sum=sum+pow(timeMatr[i]-aver, 2);
+    }
+    disp = sqrt(sum/(size-1));
+    min=aver-2.0086*disp/sqrt(TEST_NUM);
+    max=aver+2.0086*disp/sqrt(TEST_NUM);
+    printf("среднее= %f дисперсия=%f. %f < x < %f\n\n", aver, disp, min, max);
+}
 int main()
 {
+    float timeMatr[TEST_NUM];float timeMatr1[TEST_NUM];float timeMatr2[TEST_NUM];
     int r1, c1, r2, c2, r, c; //размерности матриц
     r1 = c1 =  r2 =  c2 = r = c = SIZE;
+    
+    for (int i=0; i<TEST_NUM; i++){
+    //int i=1;
     int** a=new_matrix(r1, c1);
     int** b=new_matrix(r2, c2);
     int** res=new_matrix(r, c);
     int** res1=new_matrix(r, c);
-    float time1, time2;
-    int numThreadOpenMp = 2;
+    int** res2=new_matrix(r, c);
     //генерация входных матриц
     generateMatrix(a, r1, c1);
     generateMatrix(b, r2, c2);
-    //запись входных матриц в файлы
-    writeMatrix(a, r1, c1, "files/a.txt");
-    writeMatrix(b, r2, c2, "files/b.txt");
     struct timezone tz;
     gettimeofday(&tv1, &tz); 
     //Умножение матриц
-    if(!mult(a, b, res, r1, c1, r2, c2, false, numThreadOpenMp)){
+    if(!mult(a, b, res, r1, c1, r2, c2, false, THR_NUM)){
         printf("Ошибка!!! Количество строк первой матрицы должно быть равно количеству столбцов второй матрицы!");
         exit(1);
     }
     gettimeofday(&tv2, &tz);
-    time1 = dtime();
-    printf("Время умножения: %.0f мс\n", time1);
-    //Запись результата в файл
-    writeMatrix(res, r, c, "files/output.txt");
+    timeMatr[i]=dtime();
     
     //Распараллеленный алгоритм умножения
     pthread_t threads[THR_NUM];
@@ -173,29 +185,30 @@ int main()
     for(int k = 0; k < THR_NUM; k++)
         pthread_join(threads[k], NULL);
     gettimeofday(&tv2, &tz); 
-    time2 = dtime();
-    printf("Время умножения c распараллеливанием: %.0f мс\n", time2);
-    writeMatrix(res1, r, c, "files/output_paral.txt");
+    timeMatr1[i]=dtime();
+    
+    //OpenMP
+    gettimeofday(&tv1, &tz); 
+    mult(a, b, res2, r1, c1, r2, c2, true, THR_NUM);
+    gettimeofday(&tv2, &tz); 
+    timeMatr2[i]=dtime();
+
+    if(!compareMatrix (res, res1, r1, c1, r2, c2))
+        return -1;
+    if(!compareMatrix (res, res2, r1, c1, r2, c2))
+        return -2;
     delete_matrix(a, r1, c1);
     delete_matrix(b, r2, c2);
     delete_matrix(res, r, c);
     delete_matrix(res1, r, c);
-    readMatrix(a, r1, c1, "files/output_paral.txt");
-    readMatrix(b, r2, c2, "files/output.txt");
-    printf("Time1 / Time2 = %f\n", time1/time2);
-    if(compareMatrix (a, b, r1, c1, r2, c2))
-        printf("Выходные матрицы равны!\n");
-    else
-        printf("Ошибка! Выходные матрицы разные!\n");
-    
-    gettimeofday(&tv1, &tz); 
-    mult(a, b, res, r1, c1, r2, c2, true, numThreadOpenMp);
-    gettimeofday(&tv2, &tz); 
-    printf("\nВремя умножения OpenMp: %ld мс. Число потоков = %d.\n", dtime(), numThreadOpenMp);
-    numThreadOpenMp = 8;
-    gettimeofday(&tv1, &tz); 
-    mult(a, b, res, r1, c1, r2, c2, true, numThreadOpenMp);
-    gettimeofday(&tv2, &tz); 
-    printf("Время умножения OpenMp: %ld мс. Число потоков = %d.\n", dtime(), numThreadOpenMp);
+    delete_matrix(res2, r, c);
+    }
+    //printf("%f    %f   %f \n", timeMatr[i], timeMatr1[i], timeMatr2[i]);
+    printf("Последовательное умножение\n");
+    matStatistic(timeMatr, TEST_NUM);  
+    printf("Умножение PThread\n");
+    matStatistic(timeMatr1, TEST_NUM);  
+    printf("Умножение OpenMPI\n");
+    matStatistic(timeMatr2, TEST_NUM);  
     return 0;
 }
